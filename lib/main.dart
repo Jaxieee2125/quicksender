@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:quicksender/src/presentation/providers/theme_provider.dart';
-import 'package:quicksender/src/presentation/screens/home_screen.dart';
+import 'package:quicksender/src/presentation/screens/main_screen_shell.dart';
 
 void main() {
   runApp(
@@ -23,7 +23,7 @@ class MyApp extends ConsumerWidget {
         theme: ThemeData.light(useMaterial3: true),
         darkTheme: ThemeData.dark(useMaterial3: true),
         themeMode: themeNotifier.themeMode, // Lắng nghe sự thay đổi
-        home: const HomeScreen(),
+        home: const MainScreenShell(),
       );
     }
 }

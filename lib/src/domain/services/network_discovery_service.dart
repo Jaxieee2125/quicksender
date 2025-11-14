@@ -2,14 +2,16 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart';
 import 'package:quicksender/src/core/enums/enums.dart';
 import 'package:quicksender/src/data/models/device.dart';
 import 'package:quicksender/src/data/models/local_drop_item.dart';
 import 'package:quicksender/src/domain/repositories/settings_repository.dart';
+import 'package:quicksender/src/domain/services/local_drop_service.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter_multicast_lock/flutter_multicast_lock.dart';
 
-class NetworkDiscoveryService {
+class NetworkDiscoveryService extends ChangeNotifier {
   static const int _port = 48698;
   final _controller = StreamController<List<Device>>.broadcast();
   final Map<String, Device> _onlineDevices = {};
@@ -19,23 +21,39 @@ class NetworkDiscoveryService {
   final flutterMulticastLock = FlutterMulticastLock();
   final SettingsRepository _settingsRepository;
   NetworkDiscoveryService(this._settingsRepository);
-  final _dropItemController = StreamController<Map<String, dynamic>>.broadcast();
-  Stream<Map<String, dynamic>> get incomingDropItemsStream => _dropItemController.stream; 
+  final _dropItemController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get incomingDropItemsStream =>
+      _dropItemController.stream;
 
-  final _transferResponseController = StreamController<Map<String, dynamic>>.broadcast();
-  Stream<Map<String, dynamic>> get incomingTransferResponsesStream => _transferResponseController.stream;
+  final _transferResponseController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get incomingTransferResponsesStream =>
+      _transferResponseController.stream;
 
   Stream<Map<String, dynamic>> get incomingTransferRequestsStream =>
       _requestController.stream;
 
-  final _transferControlController = StreamController<Map<String, dynamic>>.broadcast();
-  Stream<Map<String, dynamic>> get incomingTransferControlStream => _transferControlController.stream;
+  final _transferControlController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get incomingTransferControlStream =>
+      _transferControlController.stream;
 
   Device? _thisDevice;
 
   Device? get thisDevice => _thisDevice;
 
+  List<String> Function() _getHostedItemsCallback = () => [];
+  void registerHostedItemsCallback(List<String> Function() callback) {
+    _getHostedItemsCallback = callback;
+  }
+
   Stream<List<Device>> get onlineDevicesStream => _controller.stream;
+
+  final _textMessageController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get incomingTextMessagesStream =>
+      _textMessageController.stream;
 
   Future<void> start() async {
     // Lưu ý: UDP multicast/broadcast không được hỗ trợ trên Flutter Web.
@@ -45,7 +63,10 @@ class NetworkDiscoveryService {
       return;
     }
 
-    _thisDevice = await _createCurrentDeviceInfo();
+    // Khởi tạo thông tin thiết bị này
+    _thisDevice = await _createCurrentDeviceInfo(_settingsRepository);
+    notifyListeners();
+
     debugPrint(
       'This device info: ${_thisDevice?.toJson()}',
     ); // In ra thông tin máy hiện tại
@@ -57,9 +78,6 @@ class NetworkDiscoveryService {
     _socket.broadcastEnabled = true;
 
     await flutterMulticastLock.acquireMulticastLock();
-
-    // Khởi tạo thông tin thiết bị này
-    _thisDevice = await _createCurrentDeviceInfo();
 
     _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _port);
     _socket.broadcastEnabled = true;
@@ -73,19 +91,22 @@ class NetworkDiscoveryService {
             final message = utf8.decode(datagram.data);
             final json = jsonDecode(message) as Map<String, dynamic>;
             final typeString = json['type'] as String?;
-            
+
             if (typeString == null) return; // Bỏ qua nếu không có type
 
             // TÌM GIÁ TRỊ ENUM MỘT CÁCH AN TOÀN
             final messageType = MessageType.values.firstWhere(
               (e) => e.name == typeString,
-              orElse: () => MessageType.presence, // Trả về một giá trị mặc định nếu không tìm thấy
+              orElse: () => MessageType
+                  .presence, // Trả về một giá trị mặc định nếu không tìm thấy
             );
 
             // Thêm debug để xem kết quả
             if (messageType.name != typeString) {
-                debugPrint('!!! WARNING: Received unknown message type "$typeString". Defaulting to "presence".');
-                return; // Bỏ qua hoàn toàn các tin nhắn không xác định
+              debugPrint(
+                '!!! WARNING: Received unknown message type "$typeString". Defaulting to "presence".',
+              );
+              return; // Bỏ qua hoàn toàn các tin nhắn không xác định
             }
 
             final payload = json['payload'];
@@ -93,9 +114,15 @@ class NetworkDiscoveryService {
             switch (messageType) {
               case MessageType.presence:
                 final receivedDevice = Device.fromJson(payload);
-                if (receivedDevice.id != _thisDevice?.id) {
-                  _handleDiscoveredDevice(receivedDevice);
+
+                // === THÊM ĐIỀU KIỆN KIỂM TRA QUAN TRỌNG NÀY ===
+                // So sánh ID của gói tin nhận được với ID của chính thiết bị này
+                if (receivedDevice.id == _thisDevice?.id) {
+                  return; // Nếu là của mình, bỏ qua hoàn toàn
                 }
+
+                // Nếu không phải của mình, mới xử lý
+                _handleDiscoveredDevice(receivedDevice);
                 break;
               case MessageType.transferRequest:
                 _requestController.add(payload);
@@ -110,6 +137,9 @@ class NetworkDiscoveryService {
               case MessageType.pauseTransfer:
               case MessageType.resumeTransfer:
                 _transferControlController.add(payload);
+                break;
+              case MessageType.textMessage:
+                _textMessageController.add(payload);
                 break;
             }
           } catch (e) {
@@ -136,7 +166,7 @@ class NetworkDiscoveryService {
       'type': MessageType.pauseTransfer.name,
       'payload': payload,
     };
-    
+
     // Gửi trực tiếp đến IP của thiết bị đối tác
     final targetIp = InternetAddress(target.ipAddress);
     final messageBytes = utf8.encode(jsonEncode(message));
@@ -161,7 +191,7 @@ class NetworkDiscoveryService {
       'type': MessageType.resumeTransfer.name,
       'payload': payload,
     };
-    
+
     final targetIp = InternetAddress(target.ipAddress);
     final messageBytes = utf8.encode(jsonEncode(message));
     _socket.send(messageBytes, targetIp, _port);
@@ -169,9 +199,14 @@ class NetworkDiscoveryService {
 
   void _broadcastPresence() {
     if (_thisDevice != null) {
+      final hostedItemIds = _getHostedItemsCallback();
+
+      final deviceJson = _thisDevice!.toJson();
+      deviceJson['hosted_items'] = hostedItemIds;
+
       final payload = {
         'type': MessageType.presence.name,
-        'payload': _thisDevice!.toJson(),
+        'payload': deviceJson,
       };
       final message = jsonEncode(payload);
 
@@ -185,7 +220,7 @@ class NetworkDiscoveryService {
             '.255',
       );
 
-      debugPrint('Broadcasting presence to $broadcastAddress: $message');
+      //debugPrint('Broadcasting presence to $broadcastAddress: $message');
 
       // Gửi đến địa chỉ broadcast cụ thể
       _socket.send(utf8.encode(message), broadcastAddress, _port);
@@ -193,6 +228,13 @@ class NetworkDiscoveryService {
       // Bạn cũng có thể gửi thêm 1 gói đến địa chỉ chung để tăng độ tin cậy
       // _socket.send(utf8.encode(message), InternetAddress("255.255.255.255"), _port);
     }
+  }
+
+  void sendTextMessage(Device target, String text) {
+    final payload = {'sender': thisDevice!.toJson(), 'content': text};
+    final message = {'type': MessageType.textMessage.name, 'payload': payload};
+    final targetIp = InternetAddress(target.ipAddress);
+    _socket.send(utf8.encode(jsonEncode(message)), targetIp, _port);
   }
 
   // Thêm hàm mới để gửi yêu cầu
@@ -210,13 +252,17 @@ class NetworkDiscoveryService {
     );
   }
 
-  void sendTransferResponse(Device target, String sessionId, {required bool accepted}) {
+  void sendTransferResponse(
+    Device target,
+    String sessionId, {
+    required bool accepted,
+  }) {
     final payload = {'sessionId': sessionId, 'accepted': accepted};
     final message = {
       'type': MessageType.transferResponse.name,
       'payload': payload,
     };
-    
+
     // Gửi trực tiếp đến IP của người gửi ban đầu, không broadcast
     final targetIp = InternetAddress(target.ipAddress);
     final messageBytes = utf8.encode(jsonEncode(message));
@@ -247,7 +293,9 @@ class NetworkDiscoveryService {
     _controller.add(_onlineDevices.values.toList());
   }
 
-  Future<Device> _createCurrentDeviceInfo() async {
+  Future<Device> _createCurrentDeviceInfo(
+    SettingsRepository settingsRepo,
+  ) async {
     String os = "unknown";
     if (kIsWeb) os = "web";
     if (Platform.isAndroid) os = "android";
@@ -306,13 +354,28 @@ class NetworkDiscoveryService {
       bestIp = ip;
     }
 
-    final customName = await _settingsRepository.getSetting('deviceName');
+    final customName = await settingsRepo.getSetting('deviceName');
     final hostname = Platform.localHostname;
-    
-    final deviceName = (customName != null && customName.isNotEmpty) ? customName : hostname;
+    final deviceName = (customName != null && customName.isNotEmpty)
+        ? customName
+        : hostname;
+
+    // 1. Thử đọc ID đã lưu từ database
+    String? deviceId = await settingsRepo.getSetting('deviceId');
+
+    // 2. Nếu chưa có ID nào được lưu
+    if (deviceId == null) {
+      // Tạo một ID mới
+      deviceId = const Uuid().v4();
+      // Và lưu nó lại để dùng cho các lần sau
+      await settingsRepo.saveSetting('deviceId', deviceId);
+      debugPrint('Generated and saved new device ID: $deviceId');
+    } else {
+      debugPrint('Loaded existing device ID: $deviceId');
+    }
 
     return Device(
-      id: const Uuid().v4(),
+      id: deviceId,
       name: deviceName,
       ipAddress: bestIp, // Sử dụng IP tốt nhất đã được chọn lọc
       port: _port,
@@ -350,7 +413,11 @@ class NetworkDiscoveryService {
   void _broadcastJson(Map<String, dynamic> json) {
     final message = jsonEncode(json);
     final broadcastAddress = InternetAddress(
-        _thisDevice!.ipAddress.substring(0, _thisDevice!.ipAddress.lastIndexOf('.')) + '.255'
+      _thisDevice!.ipAddress.substring(
+            0,
+            _thisDevice!.ipAddress.lastIndexOf('.'),
+          ) +
+          '.255',
     );
     _socket.send(utf8.encode(message), broadcastAddress, _port);
   }

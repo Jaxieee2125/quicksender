@@ -15,6 +15,11 @@ Device _$DeviceFromJson(Map<String, dynamic> json) => Device(
   status:
       $enumDecodeNullable(_$DeviceStatusEnumMap, json['status']) ??
       DeviceStatus.online,
+  hostedItems:
+      (json['hostedItems'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList() ??
+      const [],
 );
 
 Map<String, dynamic> _$DeviceToJson(Device instance) => <String, dynamic>{
@@ -24,6 +29,7 @@ Map<String, dynamic> _$DeviceToJson(Device instance) => <String, dynamic>{
   'port': instance.port,
   'os': _$DeviceOSEnumMap[instance.os]!,
   'status': _$DeviceStatusEnumMap[instance.status]!,
+  'hostedItems': instance.hostedItems,
 };
 
 const _$DeviceOSEnumMap = {

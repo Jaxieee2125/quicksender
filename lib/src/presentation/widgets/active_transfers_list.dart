@@ -143,7 +143,7 @@ class ActiveTransfersList extends ConsumerWidget {
 
   Widget _buildPauseResumeButton(WidgetRef ref, TransferSession session) {
       final transferService = ref.read(fileTransferServiceProvider);
-      debugPrint('Building button for session ${session.sessionId} with status: ${session.status}');
+      //debugPrint('Building button for session ${session.sessionId} with status: ${session.status}');
 
       // KHI ĐANG TRUYỀN -> HIỂN THỊ NÚT PAUSE
       if (session.status == TransferStatus.transferring) {

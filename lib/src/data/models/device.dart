@@ -14,6 +14,7 @@ class Device extends Equatable {
   final int port;
   final DeviceOS os;
   final DeviceStatus status;
+  final List<String> hostedItems; // Danh sách ID các item đang được host bởi thiết bị này
 
   const Device({
     required this.id,
@@ -22,6 +23,7 @@ class Device extends Equatable {
     required this.port,
     required this.os,
     this.status = DeviceStatus.online,
+    this.hostedItems = const [],
   });
 
   // Chuyển đổi từ JSON

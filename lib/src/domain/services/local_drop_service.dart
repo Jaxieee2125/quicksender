@@ -19,9 +19,12 @@ class DownloadSession {
 
 class LocalDropService extends ChangeNotifier {
   final NetworkDiscoveryService _networkDiscoveryService;
+  late final StreamSubscription _dropItemsSubscription;
+  final Map<String, Timer> _itemBroadcastTimers = {};
+
   LocalDropService(this._networkDiscoveryService) {
     // Lắng nghe các broadcast về item mới một cách chính xác
-    _networkDiscoveryService.incomingDropItemsStream.listen((Map<String, dynamic> message) {
+    _dropItemsSubscription = _networkDiscoveryService.incomingDropItemsStream.listen((Map<String, dynamic> message) {
       final type = MessageType.values.byName(message['type'] as String);
       final payload = message['payload'] as Map<String, dynamic>;
 
@@ -51,16 +54,38 @@ class LocalDropService extends ChangeNotifier {
   void _handleNewDropItem(LocalDropItem item) {
     if (item.expiresAt.isBefore(DateTime.now())) return; // Bỏ qua nếu đã hết hạn
     //if (item.sourceDevice.id == _networkDiscoveryService.thisDevice?.id) return; // Bỏ qua item của chính mình
-
+    if (_availableItems.containsKey(item.itemId)) {
+        return;
+      }
+    debugPrint('Received new drop item: ${item.itemId} from ${item.sourceDevice.name}');
     _availableItems[item.itemId] = item;
     notifyListeners();
 
     // Tự động xóa khỏi danh sách khi hết hạn
     final duration = item.expiresAt.difference(DateTime.now());
-    Timer(duration, () {
+    final positiveDuration = duration.isNegative ? Duration.zero : duration;
+    Timer(positiveDuration, () {
+      if (_availableItems.containsKey(item.itemId)) {
       _availableItems.remove(item.itemId);
       notifyListeners();
+    }
     });
+  }
+
+  void cancelDroppedItem(String itemId) {
+    // Kiểm tra xem item này có thực sự do máy này host không
+    if (_itemServers.containsKey(itemId)) {
+      debugPrint('User manually cancelling dropped item: $itemId');
+      
+      // Gọi hàm dọn dẹp đã có
+      _cleanupItem(itemId);
+
+      // Xóa item khỏi danh sách hiển thị trên UI của chính người gửi
+      if (_availableItems.containsKey(itemId)) {
+        _availableItems.remove(itemId);
+        notifyListeners(); // Cập nhật UI ngay lập tức
+      }
+    }
   }
 
   /// Xử lý khi nhận được thông báo một item đã hết hạn
@@ -71,11 +96,14 @@ class LocalDropService extends ChangeNotifier {
     }
   }
 
+    List<String> getHostedItemIds() {
+    return _itemServers.keys.toList();
+  }
+
   /// Được gọi từ UI để "drop" một file cho mọi người trong mạng
-  Future<void> dropFile(PlatformFile file) async {
+  Future<void> dropFile(PlatformFile file, Duration lifetime) async {
     final serverSocket = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
     final itemId = const Uuid().v4();
-    final duration = const Duration(minutes: 5);
 
     final dropItem = LocalDropItem(
       itemId: itemId,
@@ -83,7 +111,7 @@ class LocalDropService extends ChangeNotifier {
       itemType: ItemType.file,
       content: file.name,
       fileSize: file.size,
-      expiresAt: DateTime.now().add(duration),
+      expiresAt: DateTime.now().add(lifetime),
       port: serverSocket.port,
     );
 
@@ -98,12 +126,29 @@ class LocalDropService extends ChangeNotifier {
     _networkDiscoveryService.broadcastDropItem(dropItem);
     debugPrint('Dropped file: ${file.name} on port ${serverSocket.port}');
 
+     // === PHẦN MỚI: BẮT ĐẦU BROADCAST ĐỊNH KỲ ===
+    final broadcastTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
+      // Kiểm tra xem item còn trong danh sách không trước khi broadcast
+      if (_itemServers.containsKey(itemId)) {
+        debugPrint('Periodically broadcasting drop item: $itemId');
+        _networkDiscoveryService.broadcastDropItem(dropItem);
+      } else {
+        timer.cancel(); // Tự hủy timer nếu item đã bị xóa
+      }
+    });
+    _itemBroadcastTimers[itemId] = broadcastTimer; // Lưu lại timer
+
     // Tự hủy sau khi hết hạn
-    Timer(duration, () => _cleanupItem(itemId));
+    Timer(lifetime, () => _cleanupItem(itemId));
   }
 
   /// Dọn dẹp một item do thiết bị này tạo ra
   void _cleanupItem(String itemId) {
+
+     // DỪNG BROADCAST ĐỊNH KỲ
+  _itemBroadcastTimers[itemId]?.cancel();
+  _itemBroadcastTimers.remove(itemId);
+
     _itemServers[itemId]?.close();
     _itemServers.remove(itemId);
     _networkDiscoveryService.broadcastDropItemExpired(itemId);
@@ -222,10 +267,9 @@ Future<void> downloadItem(LocalDropItem item) async {
   }
 }
 
-Future<void> dropText(String text) async {
+Future<void> dropText(String text, Duration lifetime) async {
   final serverSocket = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
   final itemId = const Uuid().v4();
-  final duration = const Duration(minutes: 5);
 
   final dropItem = LocalDropItem(
     itemId: itemId,
@@ -233,7 +277,7 @@ Future<void> dropText(String text) async {
     itemType: ItemType.text, // SỬ DỤNG ItemType.text
     content: text, // Nội dung chính là đoạn text
     fileSize: null, // Không có file size
-    expiresAt: DateTime.now().add(duration),
+    expiresAt: DateTime.now().add(lifetime),
     port: serverSocket.port,
   );
 
@@ -248,6 +292,18 @@ Future<void> dropText(String text) async {
     }
   });
 
+   // === PHẦN MỚI: BẮT ĐẦU BROADCAST ĐỊNH KỲ ===
+  final broadcastTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
+      // Kiểm tra xem item còn trong danh sách không trước khi broadcast
+      if (_itemServers.containsKey(itemId)) {
+        debugPrint('Periodically broadcasting drop item: $itemId');
+        _networkDiscoveryService.broadcastDropItem(dropItem);
+      } else {
+        timer.cancel(); // Tự hủy timer nếu item đã bị xóa
+      }
+    });
+    _itemBroadcastTimers[itemId] = broadcastTimer; // Lưu lại timer
+
   // Thêm item vào UI local ngay lập tức
   _availableItems[itemId] = dropItem;
   notifyListeners();
@@ -255,6 +311,20 @@ Future<void> dropText(String text) async {
   _networkDiscoveryService.broadcastDropItem(dropItem);
   debugPrint('Dropped text on port ${serverSocket.port}');
 
-  Timer(duration, () => _cleanupItem(itemId));
+  Timer(lifetime, () => _cleanupItem(itemId));
 }
+@override
+  void dispose() {
+    debugPrint('Disposing LocalDropService...');
+    // HỦY ĐĂNG KÝ LISTENER
+    _dropItemsSubscription.cancel();
+    
+    // Đóng tất cả các server socket đang mở
+    for (final server in _itemServers.values) {
+      server.close();
+    }
+    _itemServers.clear();
+
+    super.dispose(); // Gọi hàm dispose của lớp cha
+  }
 }

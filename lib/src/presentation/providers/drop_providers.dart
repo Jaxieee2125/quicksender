@@ -5,5 +5,13 @@ import 'package:quicksender/src/presentation/providers/network_providers.dart';
 
 final localDropServiceProvider = ChangeNotifierProvider<LocalDropService>((ref) {
   final networkService = ref.watch(networkDiscoveryServiceProvider);
-  return LocalDropService(networkService);
+  
+  final dropService = LocalDropService(networkService);
+
+  // === ĐÂY LÀ BƯỚC KẾT NỐI ===
+  // Đăng ký hàm `getHostedItemIds` của dropService làm callback
+  // cho networkService.
+  networkService.registerHostedItemsCallback(dropService.getHostedItemIds);
+  
+  return dropService;
 });
