@@ -48,51 +48,24 @@ class ActiveTransfersList extends ConsumerWidget {
                   ? session.transferredSize / session.totalSize
                   : 0.0;
               
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(session.type == TransferType.send ? Icons.upload : Icons.download, size: 16),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            session.files.length > 1 
-                                ? '${session.files.length} files' 
-                                : session.files.first.fileName,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text('${(progress * 100).toStringAsFixed(0)}%'),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // Gọi hàm helper để build nút Pause/Resume
-                            _buildPauseResumeButton(ref, session),
-                            // Nút Cancel
-                            IconButton(
-                              icon: const Icon(Icons.cancel_outlined),
-                              iconSize: 22,
-                              tooltip: 'Hủy',
-                              onPressed: () {
-                                ref.read(fileTransferServiceProvider).cancelTransfer(session.sessionId);
-                              },
-                            ),
-                          ],
-                        )
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    LinearProgressIndicator(
-                      value: progress,
-                      minHeight: 6,
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                  ],
+              return ListTile(
+                leading: Icon(session.type == TransferType.send ? Icons.upload : Icons.download, size: 24),
+                title: Text(
+                  session.files.length > 1 
+                      ? '${session.files.length} files' 
+                      : session.files.first.fileName,
+                  overflow: TextOverflow.ellipsis,
                 ),
+                subtitle: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 6,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                // =========================================================
+                // === ĐÂY LÀ VỊ TRÍ ĐỂ GỌI HÀM HELPER CỦA BẠN ===
+                // `trailing` là widget hiển thị ở cuối cùng bên phải của ListTile
+                // =========================================================
+                trailing: _buildTrailingWidget(ref, session),
               );
             },
           ),
@@ -100,6 +73,74 @@ class ActiveTransfersList extends ConsumerWidget {
       ),
     );
   }
+
+  Widget _buildTrailingWidget(WidgetRef ref, TransferSession session) {
+    // TÍNH TOÁN TIẾN TRÌNH
+    final progress = session.totalSize > 0
+        ? session.transferredSize / session.totalSize
+        : 0.0;
+    final progressPercent = (progress * 100).toStringAsFixed(0);
+
+    // Xử lý các trạng thái khác nhau của session
+    switch (session.status) {
+      
+      // TRƯỜNG HỢP 1: ĐANG KẾT NỐI
+      case TransferStatus.connecting:
+      case TransferStatus.accepted:
+        return const SizedBox(
+          width: 48, // Giữ cho layout ổn định
+          height: 24,
+          child: Center(
+            child: SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2.0),
+            ),
+          ),
+        );
+
+      // TRƯỜNG HỢP 2: ĐANG TRUYỀN FILE
+      case TransferStatus.transferring:
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('$progressPercent%'),
+            _buildPauseResumeButton(ref, session), // Nút Pause
+            _buildCancelButton(ref, session),      // Nút Cancel
+          ],
+        );
+
+      // TRƯỜNG HỢP 3: ĐÃ TẠM DỪNG
+      case TransferStatus.paused:
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('$progressPercent%'),
+            _buildPauseResumeButton(ref, session), // Nút Play
+            _buildCancelButton(ref, session),      // Nút Cancel
+          ],
+        );
+
+      // CÁC TRƯỜNG HỢP KHÁC (pending, completed, failed...)
+      default:
+        // Không hiển thị gì hoặc một icon chờ
+        return const SizedBox(
+          width: 48,
+          height: 24,
+          child: Center(child: Icon(Icons.hourglass_empty, size: 20)),
+        );
+    }
+  }
+
+  Widget _buildCancelButton(WidgetRef ref, TransferSession session) {
+    final transferService = ref.read(fileTransferServiceProvider);
+    return IconButton(
+      icon: const Icon(Icons.close),
+      tooltip: 'Hủy',
+      onPressed: () => transferService.cancelTransfer(session.sessionId),
+    );
+  }
+
   Widget _buildPauseResumeButton(WidgetRef ref, TransferSession session) {
       final transferService = ref.read(fileTransferServiceProvider);
       debugPrint('Building button for session ${session.sessionId} with status: ${session.status}');

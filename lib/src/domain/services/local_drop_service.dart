@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_file_dialog/flutter_file_dialog.dart';
 import 'package:quicksender/src/core/enums/enums.dart';
 import 'package:quicksender/src/data/models/local_drop_item.dart';
@@ -124,67 +126,135 @@ class LocalDropService extends ChangeNotifier {
   final Map<String, DownloadSession> _activeDownloads = {};
 List<DownloadSession> get activeDownloads => _activeDownloads.values.toList();
 
-// THAY THẾ HOÀN TOÀN HÀM downloadItem CŨ BẰNG HÀM NÀY
 Future<void> downloadItem(LocalDropItem item) async {
-  if (_activeDownloads.containsKey(item.itemId)) return; // Đã đang tải rồi
+  // =======================================================================
+  // === LOGIC MỚI: XỬ LÝ TEXT ===
+  // =======================================================================
+  if (item.itemType == ItemType.text) {
+    debugPrint('Attempting to "download" text item...');
+    Socket? socket;
+    try {
+      socket = await Socket.connect(item.sourceDevice.ipAddress, item.port)
+          .timeout(const Duration(seconds: 10));
+      
+      // Dùng utf8.decodeStream để nhận và ghép các chuỗi text một cách an toàn
+      final receivedText = await utf8.decodeStream(socket);
+      
+      // Sao chép kết quả vào clipboard
+      await Clipboard.setData(ClipboardData(text: receivedText));
+      debugPrint('Text item content copied to clipboard!');
 
-  final session = DownloadSession(item);
-  _activeDownloads[item.itemId] = session;
-  notifyListeners(); // Thông báo cho UI biết có phiên download mới
+      // PHÁT SỰ KIỆN THÀNH CÔNG (để UI có thể hiển thị SnackBar)
+      // Bạn sẽ cần tạo một Stream Event cho LocalDropService, tương tự FileTransferService
+      // Ví dụ: _eventController.add(TextCopiedEvent());
 
-  debugPrint('Attempting to download ${item.content} from ${item.sourceDevice.ipAddress}:${item.port}');
-  
-  BytesBuilder receivedBytes = BytesBuilder();
-  Socket? socket;
-
-  try {
-    socket = await Socket.connect(item.sourceDevice.ipAddress, item.port);
-    
-    final completer = Completer<void>();
-
-    socket.listen(
-      (Uint8List data) {
-        receivedBytes.add(data);
-        // CẬP NHẬT TIẾN TRÌNH VÀ THÔNG BÁO CHO UI
-        session.bytesReceived = receivedBytes.length;
-        notifyListeners();
-      },
-      onDone: () {
-        completer.complete();
-      },
-      onError: (error) {
-        completer.completeError(error);
-      },
-      cancelOnError: true,
-    );
-    
-    await completer.future;
-
-    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-            await FilePicker.platform.saveFile(
-              dialogTitle: 'Lưu file từ Local Drop:',
-              fileName: item.content, // item.content là tên file
-              bytes: receivedBytes.toBytes(),
-            );
-          } else {
-            final params = SaveFileDialogParams(
-              data: receivedBytes.toBytes(),
-              fileName: item.content,
-            );
-            await FlutterFileDialog.saveFile(params: params);
-          }
-        debugPrint('Downloaded item ${item.content} saved successfully!');
-
+    } catch (e) {
+      debugPrint('Could not download text item: $e');
+      // PHÁT SỰ KIỆN LỖI
+      // Ví dụ: _eventController.add(GenericErrorEvent("Không thể nhận text."));
+    } finally {
+      socket?.destroy();
+    }
+    return; // Kết thúc hàm sau khi xử lý text
   }
 
-   catch (e) {
-    debugPrint('Could not connect or download: $e');
-    // TODO: Xử lý lỗi, ví dụ: cập nhật trạng thái session thành FAILED
-  } finally {
-    socket?.destroy();
-    // Dọn dẹp session sau khi hoàn tất hoặc lỗi
-    _activeDownloads.remove(item.itemId);
+  // =======================================================================
+  // === LOGIC CŨ: XỬ LÝ FILE (được giữ lại và cải tiến) ===
+  // =======================================================================
+  if (item.itemType == ItemType.file) {
+    if (_activeDownloads.containsKey(item.itemId)) return; // Đã đang tải rồi
+
+    final session = DownloadSession(item);
+    _activeDownloads[item.itemId] = session;
     notifyListeners();
+
+    debugPrint('Attempting to download file: ${item.content} from ${item.sourceDevice.ipAddress}:${item.port}');
+    
+    BytesBuilder receivedBytes = BytesBuilder();
+    Socket? socket;
+
+    try {
+      socket = await Socket.connect(item.sourceDevice.ipAddress, item.port);
+      
+      final completer = Completer<void>();
+
+      socket.listen(
+        (Uint8List data) {
+          receivedBytes.add(data);
+          session.bytesReceived = receivedBytes.length;
+          notifyListeners();
+        },
+        onDone: () {
+          if (!completer.isCompleted) completer.complete();
+        },
+        onError: (error) {
+          if (!completer.isCompleted) completer.completeError(error);
+        },
+        cancelOnError: true,
+      );
+      
+      await completer.future;
+
+      // Logic lưu file của bạn đã đúng, giữ nguyên
+      if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+        await FilePicker.platform.saveFile(
+          dialogTitle: 'Lưu file từ Local Drop:',
+          fileName: item.content,
+          bytes: receivedBytes.toBytes(),
+        );
+      } else {
+        final params = SaveFileDialogParams(
+          data: receivedBytes.toBytes(),
+          fileName: item.content,
+        );
+        await FlutterFileDialog.saveFile(params: params);
+      }
+      debugPrint('Downloaded item ${item.content} saved successfully!');
+
+    } catch (e) {
+      debugPrint('Could not connect or download file: $e');
+      // PHÁT SỰ KIỆN LỖI
+    } finally {
+      socket?.destroy();
+      _activeDownloads.remove(item.itemId);
+      notifyListeners();
+    }
   }
+}
+
+Future<void> dropText(String text) async {
+  final serverSocket = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
+  final itemId = const Uuid().v4();
+  final duration = const Duration(minutes: 5);
+
+  final dropItem = LocalDropItem(
+    itemId: itemId,
+    sourceDevice: _networkDiscoveryService.thisDevice!,
+    itemType: ItemType.text, // SỬ DỤNG ItemType.text
+    content: text, // Nội dung chính là đoạn text
+    fileSize: null, // Không có file size
+    expiresAt: DateTime.now().add(duration),
+    port: serverSocket.port,
+  );
+
+  _itemServers[itemId] = serverSocket;
+  // Khi có người kết nối, chỉ cần gửi nội dung text và đóng lại
+  serverSocket.listen((socket) {
+    debugPrint('Downloader connected for text item, sending content...');
+    try {
+      socket.write(text);
+    } finally {
+      socket.close();
+    }
+  });
+
+  // Thêm item vào UI local ngay lập tức
+  _availableItems[itemId] = dropItem;
+  notifyListeners();
+
+  _networkDiscoveryService.broadcastDropItem(dropItem);
+  debugPrint('Dropped text on port ${serverSocket.port}');
+
+  Timer(duration, () => _cleanupItem(itemId));
 }
 }

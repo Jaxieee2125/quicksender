@@ -15,6 +15,9 @@ import 'package:quicksender/src/presentation/screens/settings_screen.dart';
 import 'package:quicksender/src/presentation/widgets/active_transfers_list.dart';
 import 'package:quicksender/src/presentation/widgets/empty_state_widget.dart';
 import 'package:quicksender/src/presentation/widgets/local_drop_area.dart';
+import 'package:quicksender/src/core/events/transfer_events.dart';
+
+import 'package:quicksender/src/core/utils/dialogs.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -49,9 +52,9 @@ class HomeScreen extends ConsumerWidget {
               onPressed: () {
                 ref.read(fileTransferServiceProvider).acceptTransfer(payload);
                 Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Đang bắt đầu nhận file...')),
-                );
+                // ScaffoldMessenger.of(context).showSnackBar(
+                //   const SnackBar(content: Text('Đang bắt đầu nhận file...')),
+                // );
               },
               child: const Text('Chấp nhận'),
             ),
@@ -59,6 +62,35 @@ class HomeScreen extends ConsumerWidget {
         ),
       );
     });
+
+    ref.listen<Stream<TransferEvent>>(
+      // Chúng ta cần `select` để chỉ lắng nghe stream, không build lại widget khi có event
+      fileTransferServiceProvider.select((provider) => provider.eventsStream),
+      (previous, next) {
+        // `next` là stream, chúng ta cần listen vào nó một lần nữa
+        next.listen((event) {
+          if (event is NotEnoughSpaceEvent) {
+            showErrorDialog(
+              context: context,
+              title: 'Không đủ dung lượng',
+              message: 'Không đủ dung lượng để nhận file. Yêu cầu ${event.requiredSpaceMB.toStringAsFixed(1)} MB nhưng chỉ còn trống ${event.freeSpaceMB.toStringAsFixed(1)} MB.',
+            );
+          } else if (event is ChecksumMismatchEvent) {
+            showErrorDialog(
+              context: context,
+              title: 'Lỗi truyền file',
+              message: 'File "${event.fileName}" đã bị lỗi trong quá trình truyền và đã được tự động xóa để đảm bảo an toàn.',
+            );
+          } else if (event is ResumeFailedEvent) {
+            showErrorDialog(
+              context: context,
+              title: 'Không thể tiếp tục',
+              message: 'Không nhận được phản hồi từ thiết bị kia. Vui lòng thử lại.',
+            );
+          }
+        });
+      },
+    );
 
     // Sử dụng LayoutBuilder để quyết định layout nào sẽ được hiển thị
     return LayoutBuilder(
@@ -212,9 +244,9 @@ class HomeScreen extends ConsumerWidget {
                 if (result != null && result.files.isNotEmpty) {
                   try {
                     await ref.read(fileTransferServiceProvider).requestToSendFiles(device, result.files);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Đã gửi yêu cầu tới ${device.name}...')),
-                    );
+                    // ScaffoldMessenger.of(context).showSnackBar(
+                    //   SnackBar(content: Text('Đã gửi yêu cầu tới ${device.name}...')),
+                    // );
                   } catch (e) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(content: Text('Lỗi: $e')),

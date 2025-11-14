@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_linux
+  disk_space_2
   file_saver
   sqlite3_flutter_libs
 )

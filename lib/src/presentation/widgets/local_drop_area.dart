@@ -7,11 +7,23 @@ import 'package:quicksender/src/domain/services/local_drop_service.dart';
 import 'package:quicksender/src/presentation/providers/drop_providers.dart';
 import 'dart:async'; // Cần cho Timer
 
-class LocalDropArea extends ConsumerWidget {
+class LocalDropArea extends ConsumerStatefulWidget { // Chuyển thành StatefulWidget
   const LocalDropArea({super.key});
+  @override
+  ConsumerState<LocalDropArea> createState() => _LocalDropAreaState();
+}
+
+class _LocalDropAreaState extends ConsumerState<LocalDropArea> {
+  final _textController = TextEditingController();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final dropService = ref.watch(localDropServiceProvider);
     final items = dropService.availableItems;
 
@@ -20,6 +32,28 @@ class LocalDropArea extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          TextField(
+            controller: _textController,
+            maxLines: 3,
+            decoration: InputDecoration(
+              hintText: 'Dán text hoặc link vào đây...',
+              border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.send),
+                tooltip: 'Drop Text',
+                onPressed: () {
+                  final text = _textController.text.trim();
+                  if (text.isNotEmpty) {
+                    ref.read(localDropServiceProvider).dropText(text);
+                    _textController.clear();
+                    // Ẩn bàn phím
+                    FocusScope.of(context).unfocus();
+                  }
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 12),

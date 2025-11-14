@@ -1,7 +1,12 @@
-// trong file dialogs.dart
+// trong file: lib/src/core/utils/dialogs.dart
 import 'package:flutter/material.dart';
 
-void showErrorDialog(BuildContext context, String title, String message) {
+// Đảm bảo hàm của bạn trông giống hệt như thế này
+void showErrorDialog({
+  required BuildContext context,
+  required String title,
+  required String message,
+}) {
   showDialog(
     context: context,
     builder: (ctx) => AlertDialog(

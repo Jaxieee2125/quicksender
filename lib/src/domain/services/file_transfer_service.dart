@@ -15,6 +15,9 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_file_dialog/flutter_file_dialog.dart';
 import 'package:quicksender/src/domain/services/sound_service.dart';
+import 'dart:async';
+import 'package:quicksender/src/core/events/transfer_events.dart';
+import 'package:disk_space_2/disk_space_2.dart';
 
 class FileTransferService extends ChangeNotifier {
   final Map<String, TransferSession> _activeSessions = {};
@@ -31,6 +34,9 @@ class FileTransferService extends ChangeNotifier {
   final SoundService _soundService;
 
   final AppDatabase _db;
+
+  final _eventController = StreamController<TransferEvent>.broadcast();
+  Stream<TransferEvent> get eventsStream => _eventController.stream;
 
   FileTransferService(
     this._networkDiscoveryService,
@@ -419,7 +425,23 @@ class FileTransferService extends ChangeNotifier {
     _activeSessions[session.sessionId] = session;
     notifyListeners();
 
+     final double totalSizeMB = session.totalSize / (1024 * 1024); 
+    // Lấy dung lượng trống trên thiết bị (tính bằng MB)
+    final double? freeSpaceMB = await DiskSpace.getFreeDiskSpace; 
+
+    if (freeSpaceMB != null && freeSpaceMB < totalSizeMB) {
+      debugPrint("Not enough space.");
+      _logTransferToDatabase(session, TransferStatus.failed);
+      
+      // PHÁT SỰ KIỆN
+      _eventController.add(NotEnoughSpaceEvent(totalSizeMB, freeSpaceMB));
+      
+      return;
+    }
+
     try {
+      session.status = TransferStatus.connecting;
+      notifyListeners();
       final socket = await Socket.connect(
         sender.ipAddress,
         requestPayload['port'],
@@ -492,6 +514,7 @@ class FileTransferService extends ChangeNotifier {
       
     } catch (e) {
       debugPrint('Error resuming transfer (e.g., timeout): $e.');
+       _eventController.add(ResumeFailedEvent());
       // Nếu có lỗi, chuyển trạng thái thành failed và dọn dẹp
       if (session.status == TransferStatus.transferring) { // Chỉ thay đổi nếu chưa bị pause lần nữa
           session.status = TransferStatus.failed;
@@ -694,7 +717,7 @@ class FileTransferService extends ChangeNotifier {
                     '!!! CHECKSUM MISMATCH for $fileName. Expected: $expectedChecksum, Got: $actualChecksum',
                   );
 
-                  // TODO: Hiển thị dialog báo lỗi cho người dùng
+                  _eventController.add(ChecksumMismatchEvent(fileName));
 
                   await File(finalFilePath).delete(); // Xóa file bị lỗi
                   socket.destroy(); // Hủy toàn bộ session
