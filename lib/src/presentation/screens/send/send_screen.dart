@@ -27,6 +27,13 @@ class _SendScreenState extends ConsumerState<SendScreen> {
   final List<PlatformFile> _selectedFiles = [];
 
   String? _selectedText; 
+
+  bool _isEditing = false;
+
+  int get _totalSelectionSize {
+    if (_selectedFiles.isEmpty) return 0;
+    return _selectedFiles.fold(0, (sum, file) => sum + file.size);
+  }
   
   /// Set chứa ID của các thiết bị người dùng đã chọn để gửi đến.
   /// Dùng Set để tránh trùng lặp và truy xuất nhanh.
@@ -44,11 +51,14 @@ class _SendScreenState extends ConsumerState<SendScreen> {
   }
   
   void _removeFile(PlatformFile file) {
-    setState(() {
-      _selectedFiles.remove(file);
-    });
-  }
-
+  setState(() {
+    _selectedFiles.remove(file);
+    // Nếu không còn gì để sửa, tự động thoát khỏi chế độ edit
+    if (_selectedFiles.isEmpty && (_selectedText == null || _selectedText!.isEmpty)) {
+      _isEditing = false;
+    }
+  });
+}
   void _sendRequest() {
 
     final bool hasSomethingToSend = _selectedFiles.isNotEmpty || (_selectedText != null && _selectedText!.isNotEmpty);
@@ -101,20 +111,6 @@ Widget build(BuildContext context) {
   return Scaffold(
     appBar: AppBar(
       title: const Text('Gửi'),
-      actions: [
-        // Nút xóa tất cả lựa chọn
-        if (hasSomethingToSend)
-          IconButton(
-            icon: const Icon(Icons.delete_sweep_outlined),
-            tooltip: 'Xóa tất cả lựa chọn',
-            onPressed: () {
-              setState(() {
-                _selectedFiles.clear();
-                _selectedText = null;
-              });
-            },
-          ),
-      ],
     ),
     body: Padding(
       padding: const EdgeInsets.all(16.0),
@@ -317,38 +313,141 @@ void _pasteFromClipboard() async {
 
 // HÀM HELPER ĐỂ HIỂN THỊ "KHAY CHỜ GỬI"
 Widget _buildSelectionPreview() {
+  // === GIAO DIỆN CHẾ ĐỘ CHỈNH SỬA (EDIT MODE) ===
+  if (_isEditing) {
+    return Card(
+      margin: const EdgeInsets.only(top: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text('Chỉnh sửa lựa chọn'),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.delete_sweep_outlined),
+                  tooltip: 'Xóa tất cả',
+                  onPressed: () {
+                    setState(() {
+                      _selectedFiles.clear();
+                      _selectedText = null;
+                      _isEditing = false; // Thoát khỏi chế độ edit nếu không còn gì
+                    });
+                  },
+                ),
+                FilledButton.tonal(
+                  onPressed: () => setState(() => _isEditing = false),
+                  child: const Text('Xong'),
+                ),
+              ],
+            ),
+            const Divider(),
+            // Hiển thị text (nếu có)
+            SizedBox(
+  // Đặt một chiều cao tối đa hợp lý
+  // Bạn có thể dùng MediaQuery để tính toán linh hoạt hơn nếu muốn
+  height: 250, 
+  child: ListView(
+    shrinkWrap: true,
+    children: [
+      // Hiển thị text (nếu có)
+      if (_selectedText != null && _selectedText!.isNotEmpty)
+        ListTile(
+          leading: const Icon(Icons.notes),
+          title: Text(_selectedText!, maxLines: 2, overflow: TextOverflow.ellipsis),
+          trailing: IconButton(
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () => setState(() => _selectedText = null),
+          ),
+        ),
+      // Hiển thị danh sách file
+      ..._selectedFiles.map((file) => ListTile(
+            leading: const Icon(Icons.description),
+            title: Text(file.name, overflow: TextOverflow.ellipsis),
+            subtitle: Text(formatBytes(file.size, 1)),
+            trailing: IconButton(
+              icon: const Icon(Icons.delete_outline),
+              onPressed: () => _removeFile(file),
+            ),
+          )),
+    ],
+  ),
+),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // === GIAO DIỆN CHẾ ĐỘ TÓM TẮT (SUMMARY MODE) ===
   return Card(
     margin: const EdgeInsets.only(top: 16),
     child: Padding(
-      padding: const EdgeInsets.all(8.0),
+      padding: const EdgeInsets.all(12.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Hiển thị text đã chọn
-          if (_selectedText != null && _selectedText!.isNotEmpty)
-            ListTile(
-              leading: const Icon(Icons.notes),
-              title: Text(
-                _selectedText!,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+          // Hàng trên cùng: Tiêu đề và nút Xóa
+          Row(
+            children: [
+              Text('Lựa chọn', style: Theme.of(context).textTheme.titleMedium),
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.close),
+                tooltip: 'Xóa lựa chọn',
+                onPressed: () {
+                  setState(() {
+                    _selectedFiles.clear();
+                    _selectedText = null;
+                  });
+                },
               ),
-              trailing: IconButton(
-                icon: const Icon(Icons.clear),
-                onPressed: () => setState(() => _selectedText = null),
+            ],
+          ),
+          const SizedBox(height: 8),
+
+          // Hàng thông tin tóm tắt
+          if (_selectedFiles.isNotEmpty)
+            Text('Số file: ${_selectedFiles.length}\nKích thước: ${formatBytes(_totalSelectionSize, 1)}'),
+          if (_selectedText != null && _selectedText!.isNotEmpty)
+            const Text('1 tin nhắn văn bản'),
+
+          const SizedBox(height: 16),
+
+          // Hàng chứa các icon preview
+          if (_selectedFiles.isNotEmpty)
+            SizedBox(
+              height: 40,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: _selectedFiles.length,
+                itemBuilder: (context, index) => const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 2.0),
+                  child: Icon(Icons.attachment, size: 32),
+                ),
               ),
             ),
-          // Hiển thị danh sách file đã chọn
-          if (_selectedFiles.isNotEmpty)
-            ..._selectedFiles.map((file) => ListTile(
-                  leading: const Icon(Icons.description),
-                  title: Text(file.name, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(formatBytes(file.size, 1)), // Dùng hàm formatBytes đã có
-                  trailing: IconButton(
-                    icon: const Icon(Icons.clear),
-                    onPressed: () => _removeFile(file),
-                  ),
-                )),
+          
+          const Divider(height: 24),
+
+          // Hàng dưới cùng: Nút Edit và Add
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => setState(() => _isEditing = true),
+                child: const Text('Chỉnh sửa'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: _pickFiles, // Hàm _pickFiles đã có
+                icon: const Icon(Icons.add),
+                label: const Text('Thêm'),
+              ),
+            ],
+          )
         ],
       ),
     ),
