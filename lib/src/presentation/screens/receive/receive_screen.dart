@@ -59,11 +59,11 @@ class ReceiveScreen extends ConsumerWidget {
                     const Spacer(flex: 2),
 
                     // Avatar/Icon lớn
-                    const CircleAvatar(
-                      radius: 60,
-                      child: Icon(Icons.wifi_tethering_rounded, size: 60),
+                    PulsingAvatar(
+                      // Lấy icon tương ứng với HĐH của thiết bị hiện tại
+                      iconData: _getIconForOS(thisDevice.os),
                     ),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 20),
 
                     // Tên thiết bị
                     Text(
@@ -169,5 +169,97 @@ class ReceiveScreen extends ConsumerWidget {
       default:
         return Icons.devices;
     }
+  }
+}
+
+class PulsingAvatar extends StatefulWidget {
+  final IconData iconData;
+  const PulsingAvatar({super.key, required this.iconData});
+
+  @override
+  State<PulsingAvatar> createState() => _PulsingAvatarState();
+}
+
+// `SingleTickerProviderStateMixin` là cần thiết để cung cấp "nhịp tim" cho AnimationController
+class _PulsingAvatarState extends State<PulsingAvatar> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    // Tạo controller với thời gian animation là 3 giây
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 7000),
+    );
+    // Bắt đầu animation và lặp lại vô hạn
+    _controller.repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 200, // Kích thước tổng thể của khu vực animation
+      height: 200,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // === CÁC VÒNG SÓNG ANIMATION ===
+          // Chúng ta tạo ra 3 vòng sóng, mỗi vòng bắt đầu ở một thời điểm khác nhau
+          _buildExpandingWave(delay: 0.0),
+          _buildExpandingWave(delay: 0.3),
+          _buildExpandingWave(delay: 0.6),
+
+          // === ICON CHÍNH Ở GIỮA ===
+          CircleAvatar(
+            radius: 60,
+            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+            child: Icon(
+              widget.iconData,
+              size: 60,
+              color: Theme.of(context).colorScheme.onPrimaryContainer,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Hàm helper để build một vòng sóng
+  Widget _buildExpandingWave({required double delay}) {
+    // AnimatedBuilder sẽ tự động lắng nghe controller và build lại chỉ riêng widget này
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        // `CurvedAnimation` với `Interval` để tạo hiệu ứng trễ
+        final animation = CurvedAnimation(
+          parent: _controller,
+          curve: Interval(delay, 1.0, curve: Curves.easeInOut),
+        );
+
+        // Tính toán bán kính và độ mờ dựa trên giá trị animation (0.0 -> 1.0)
+        final radius = 60 + (animation.value * 140);
+        final opacity = 1.0 - animation.value;
+
+        return Container(
+          width: radius,
+          height: radius,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              // Màu của sóng, mờ dần đi
+              color: Theme.of(context).colorScheme.primary.withOpacity(opacity > 0 ? opacity : 0),
+              width: 2.0,
+            ),
+          ),
+        );
+      },
+    );
   }
 }

@@ -274,9 +274,9 @@ class FileTransferService extends ChangeNotifier {
   }
 
   Future<void> _startSendingData(TransferSession session, Socket socket) async {
-    debugPrint(
-      'Sender: Starting data transfer. Updating status to "transferring".',
-    );
+    // debugPrint(
+    //   'Sender: Starting data transfer. Updating status to "transferring".',
+    // );
     session.status = TransferStatus.transferring;
     session.resetProgress(); // Đảm bảo tiến trình bắt đầu từ 0
     notifyListeners();
@@ -601,9 +601,9 @@ class FileTransferService extends ChangeNotifier {
           return;
         }
 
-        debugPrint(
-          'Receiver: Starting data transfer. Updating status to "transferring".',
-        );
+        // debugPrint(
+        //   'Receiver: Starting data transfer. Updating status to "transferring".',
+        // );
         session?.status = TransferStatus.transferring;
         notifyListeners();
 

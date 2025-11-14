@@ -19,11 +19,33 @@ class MyApp extends ConsumerWidget {
     Widget build(BuildContext context, WidgetRef ref) {
       final themeNotifier = ref.watch(themeProvider);
       return MaterialApp(
-        title: 'QuickSender',
-        theme: ThemeData.light(useMaterial3: true),
-        darkTheme: ThemeData.dark(useMaterial3: true),
-        themeMode: themeNotifier.themeMode, // Lắng nghe sự thay đổi
-        home: const MainScreenShell(),
-      );
+      title: 'QuickSender',
+      debugShowCheckedModeBanner: false, // Tắt banner "DEBUG"
+
+      // === GIAO DIỆN SÁNG (LIGHT THEME) ===
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          // THAY ĐỔI TỪ `Colors.deepPurple` THÀNH `Colors.cyan`
+          seedColor: Colors.lightBlue, 
+          brightness: Brightness.light,
+        ),
+        useMaterial3: true,
+      ),
+
+      // === GIAO DIỆN TỐI (DARK THEME) ===
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          // THAY ĐỔI TỪ `Colors.deepPurple` THÀNH `Colors.cyan`
+          seedColor: Colors.lightBlue,
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
+      ),
+
+      // Lắng nghe provider để tự động đổi theme
+      themeMode: themeNotifier.themeMode,
+
+      home: const MainScreenShell(),
+    );
     }
 }
